@@ -1,0 +1,12 @@
+{
+  "name": "@apispec/ordering-api",
+  "version": "0.1.0",
+  "main": "main.tsp",
+  "type": "module",
+  "dependencies": {
+    "@apispec/common": "0.1.0",
+    "@typespec/compiler": "latest",
+    "@typespec/openapi3": "latest"
+  },
+  "private": true
+}

@@ -1,0 +1,7 @@
+{
+    "name": "@apispec/root",
+    "workspaces": [
+        "./core/typespec/",
+        "./services/ordering/api/typespec/"
+    ]
+}

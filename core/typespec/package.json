@@ -1,0 +1,10 @@
+{
+  "name": "@apispec/common",
+  "version": "0.1.0",
+  "main": "main.tsp",
+  "type": "module",
+  "dependencies": {
+    "@typespec/http": "latest"
+  },
+  "private": true
+}

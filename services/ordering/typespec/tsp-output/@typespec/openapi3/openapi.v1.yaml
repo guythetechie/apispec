@@ -1,0 +1,108 @@
+openapi: 3.0.0
+info:
+  title: Ordering API
+  version: v1
+tags:
+  - name: Orders
+paths:
+  /v1/orders/{id}:
+    delete:
+      tags:
+        - Orders
+      operationId: Orders_deleteOrder
+      description: Delete an order
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            format: uuid
+        - $ref: '#/components/parameters/ApiSpec.Common.IfMatchHeader'
+      responses:
+        '204':
+          description: >-
+            There is no content to send for this request, but the headers may be
+            useful. 
+        '400':
+          description: The server could not understand the request due to invalid syntax.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: string
+                    enum:
+                      - InvalidConditionalHeader
+                  message:
+                    $ref: '#/components/schemas/ApiSpec.Common.NonEmptyString'
+                required:
+                  - code
+                  - message
+                x-typespec-name: ApiSpec.Common.(anonymous model)
+        '412':
+          description: Precondition failed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: string
+                    enum:
+                      - ETagMismatch
+                  message:
+                    $ref: '#/components/schemas/ApiSpec.Common.NonEmptyString'
+                required:
+                  - code
+                  - message
+                x-typespec-name: ApiSpec.Common.(anonymous model)
+        '428':
+          description: Client Error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: string
+                    enum:
+                      - InvalidConditionalHeader
+                  message:
+                    $ref: '#/components/schemas/ApiSpec.Common.NonEmptyString'
+                required:
+                  - code
+                  - message
+                x-typespec-name: ApiSpec.Common.(anonymous model)
+components:
+  parameters:
+    ApiSpec.Common.IfMatchHeader:
+      name: If-Match
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 1
+  schemas:
+    ApiSpec.Common.NonEmptyString:
+      type: string
+      minLength: 1
+    Order:
+      type: object
+      properties:
+        id:
+          $ref: '#/components/schemas/OrderId'
+      description: The order
+      required:
+        - id
+    OrderId:
+      type: string
+      minLength: 1
+      description: The order ID
+      format: uuid
+    Versions:
+      type: string
+      enum:
+        - v1
