@@ -24,7 +24,9 @@ model ApiError {
 @minLength(1)
 scalar NonEmptyString extends string;
 
-scalar ETag extends NonEmptyString;
+model ETag {
+    eTag: NonEmptyString;
+}
 
 scalar ResourceId extends NonEmptyString;
 
@@ -41,10 +43,10 @@ union DeleteResponse {
         code: ErrorCode.InvalidConditionalHeader,
         message: NonEmptyString,
     },
-    @doc("If-Match header is invalid.")
+    @doc("Request is invalid.")
     ifMatchHeaderInvalid: {
         @statusCode _: 400,
-        code: ErrorCode.InvalidConditionalHeader,
+        code: ErrorCode.InvalidConditionalHeader | ErrorCode.InvalidId,
         message: NonEmptyString,
     },
     @doc("Resource ETag doesn't match If-Match header")
@@ -59,9 +61,36 @@ union DeleteResponse {
     },
 }
 
+union GetResponse<TResource extends object> {
+    @doc("Resource ID is invalid.")
+    resourceIdIsInvalid: {
+        @statusCode _: 400,
+        code: ErrorCode.InvalidId,
+        message: NonEmptyString,
+    },
+    @doc("Resource ID was not found")
+    eTagMismatch: {
+        @statusCode _: 404,
+        code: ErrorCode.ResourceNotFound,
+        message: NonEmptyString,
+    },
+    @doc("Resource was found.")
+    success: {
+        @statusCode _: 200,
+        ...TResource,
+        ...ETag,
+    },
+}
+
 @delete
 @route("{id}")
-op deleteResource<T extends ResourceId>(
-    @path id: T,
+op deleteResource<TId extends ResourceId>(
+    @path id: TId,
     ...IfMatchHeader
 ): DeleteResponse;
+
+@get
+@route("{id}")
+op getResource<TId extends ResourceId, TResource extends object>(
+    @path id: TId
+): GetResponse<TResource>;

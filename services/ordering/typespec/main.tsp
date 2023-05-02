@@ -10,7 +10,7 @@ using TypeSpec.Http;
     title: "Ordering API",
     description: "Ordering API",
 })
-@versioned(Versions)
+// @versioned(Versions)
 namespace api;
 
 enum Versions {
@@ -32,4 +32,7 @@ model Order {
 interface Orders {
     @doc("Delete an order")
     deleteOrder is deleteResource<OrderId>;
+
+    @doc("Get an order")
+    getOrder is getResource<OrderId, Order>;
 }

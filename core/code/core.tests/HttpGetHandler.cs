@@ -8,13 +8,13 @@ using Microsoft.AspNetCore.Http.HttpResults;
 using System;
 using System.IO;
 using System.Linq;
+using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
-using static core.HttpHandler;
 
 namespace core.tests;
 
-public class HttpDeleteHandlerTests
+public class HttpGetHandlerTests
 {
     [Property]
     public Property Invalid_id_fails()
@@ -34,7 +34,7 @@ public class HttpDeleteHandlerTests
             var (badIdErrorMessage, fixture) = x;
 
             // Act
-            var result = await fixture.Delete();
+            var result = await fixture.Get();
 
             // Assert
             var httpResult = result.Should().BeOfType<JsonHttpResult<ApiErrorWithStatusCode>>().Subject;
@@ -50,12 +50,12 @@ public class HttpDeleteHandlerTests
     }
 
     [Property]
-    public Property Missing_If_Match_header_fails()
+    public Property Missing_resource_returns_NotFound()
     {
         var generator = from fixture in GenerateValidFixture()
                         select fixture with
                         {
-                            Headers = new HeaderDictionary()
+                            FindResourceResult = Prelude.None
                         };
 
         var arbitrary = generator.ToArbitrary();
@@ -63,161 +63,84 @@ public class HttpDeleteHandlerTests
         return Prop.ForAll(arbitrary, async fixture =>
         {
             // Act
-            var result = await fixture.Delete();
+            var result = await fixture.Get();
 
             // Assert
             var httpResult = result.Should().BeOfType<JsonHttpResult<ApiErrorWithStatusCode>>().Subject;
-            httpResult.StatusCode.Should().Be(StatusCodes.Status428PreconditionRequired);
+            httpResult.StatusCode.Should().Be(StatusCodes.Status404NotFound);
 
             var httpResultValue = httpResult.Value;
             httpResultValue.Should().NotBeNull();
             var apiError = httpResultValue.Should().BeAssignableTo<ApiError>().Subject;
 
-            apiError.Code.Should().BeOfType<ApiErrorCode.InvalidConditionalHeader>();
+            apiError.Code.Should().BeOfType<ApiErrorCode.ResourceNotFound>();
         });
     }
 
     [Property]
-    public Property Invalid_If_Match_headers_fail()
-    {
-        var generator = from fixture in GenerateValidFixture()
-                        from headers in Gen.OneOf(GenerateNullOrWhiteSpaceIfMatchHeader(), GenerateMultipleIfMatchHeaders())
-                        select fixture with
-                        {
-                            Headers = headers
-                        };
-
-        var arbitrary = generator.ToArbitrary();
-
-        return Prop.ForAll(arbitrary, async fixture =>
-        {
-            // Act
-            var result = await fixture.Delete();
-
-            // Assert
-            var httpResult = result.Should().BeOfType<JsonHttpResult<ApiErrorWithStatusCode>>().Subject;
-            httpResult.StatusCode.Should().Be(StatusCodes.Status400BadRequest);
-
-            var httpResultValue = httpResult.Value;
-            httpResultValue.Should().NotBeNull();
-            var apiError = httpResultValue.Should().BeAssignableTo<ApiError>().Subject;
-
-            apiError.Code.Should().BeOfType<ApiErrorCode.InvalidConditionalHeader>();
-        });
-    }
-
-    [Property]
-    public Property Incorrect_ETag_fails()
-    {
-        var generator = from fixture in GenerateValidFixture()
-                        select fixture with
-                        {
-                            DeleteResult = Prelude.Left(new DeleteError.ETagMismatch() as DeleteError)
-                        };
-
-        var arbitrary = generator.ToArbitrary();
-
-        return Prop.ForAll(arbitrary, async fixture =>
-        {
-            // Act
-            var result = await fixture.Delete();
-
-            // Assert
-            var httpResult = result.Should().BeOfType<JsonHttpResult<ApiErrorWithStatusCode>>().Subject;
-            httpResult.StatusCode.Should().Be(StatusCodes.Status412PreconditionFailed);
-
-            var httpResultValue = httpResult.Value;
-            httpResultValue.Should().NotBeNull();
-            var apiError = httpResultValue.Should().BeAssignableTo<ApiError>().Subject;
-
-            apiError.Code.Should().BeOfType<ApiErrorCode.ETagMismatch>();
-        });
-    }
-
-    [Property]
-    public Property Valid_request_succeeds()
+    public Property Existing_resource_returns_json_that_includes_eTag()
     {
         var arbitrary = GenerateValidFixture().ToArbitrary();
 
         return Prop.ForAll(arbitrary, async fixture =>
         {
             // Act
-            var result = await fixture.Delete();
+            var result = await fixture.Get();
 
             // Assert
-            var httpResult = result.Should().BeOfType<NoContent>().Subject;
-            httpResult.StatusCode.Should().Be(StatusCodes.Status204NoContent);
+            var httpResult = result.Should().BeOfType<Ok<JsonObject>>().Subject;
+            httpResult.StatusCode.Should().Be(StatusCodes.Status200OK);
+            httpResult.Value.Should().Equal(fixture.SerializedResource);
         });
     }
 
-    private static Gen<Fixture<object>> GenerateValidFixture()
+    private static Gen<Fixture<object, object>> GenerateValidFixture()
     {
         return from internet in Generator.Internet
                let uri = internet.UrlWithPath()
+               from resource in GenExtensions.GenerateDefault<object>()
+               from resourceJson in Generator.JsonObject
                from eTag in Generator.ETag
-               let headers = new HeaderDictionary
-               {
-                   ["If-Match"] = eTag.Value
-               }
                from id in GenExtensions.GenerateDefault<object>()
-               select new Fixture<object>
+               select new Fixture<object, object>
                {
-                   Headers = headers,
                    RequestUri = new Uri(uri, UriKind.Absolute),
                    GetIdResult = Prelude.Right(id),
-                   DeleteResult = Prelude.Right(Prelude.unit)
+                   FindResourceResult = (resource, eTag),
+                   SerializedResource = resourceJson
                };
     }
 
-    private static Gen<IHeaderDictionary> GenerateNullOrWhiteSpaceIfMatchHeader()
-    {
-        return from nullOrWhitespaceString in Generator.WhiteSpaceString
-               select new HeaderDictionary
-               {
-                   ["If-Match"] = nullOrWhitespaceString
-               } as IHeaderDictionary;
-    }
-
-    private static Gen<IHeaderDictionary> GenerateMultipleIfMatchHeaders()
-    {
-        return from values in GenExtensions.GenerateDefault<string>()
-                                           .ArrayOf()
-                                           .Where(x => x.Length > 1)
-               select new HeaderDictionary
-               {
-                   ["If-Match"] = values
-               } as IHeaderDictionary;
-    }
-
-    private sealed record Fixture<TId>
+    private sealed record Fixture<TId, TResource>
     {
         public required Uri RequestUri { get; init; }
 
-        public IHeaderDictionary Headers { get; init; } = new HeaderDictionary();
-
         public required Either<string, TId> GetIdResult { get; init; }
 
-        public required Either<DeleteError, Unit> DeleteResult { get; init; }
+        public required Option<(TResource Resource, ETag ETag)> FindResourceResult { get; init; }
 
-        public async ValueTask<IResult> Delete()
+        public required JsonObject SerializedResource { get; init; }
+
+        public async ValueTask<IResult> Get()
         {
-            var request = new TestHttpRequest(RequestUri, Headers);
-            return await HttpHandler.Delete<TId>(request, TryGetIdFromString, TryDeleteRecord);
+            var request = new TestHttpRequest(RequestUri);
+            return await HttpHandler.Get(request, TryGetIdFromString, FindResource, SerializeResource);
         }
 
         private Either<string, TId> TryGetIdFromString(string id) => GetIdResult;
 
-        private async ValueTask<Either<DeleteError, Unit>> TryDeleteRecord(TId id, ETag eTag) =>
-            await ValueTask.FromResult(DeleteResult);
+        private async ValueTask<Option<(TResource, ETag)>> FindResource(TId id) =>
+            await ValueTask.FromResult(FindResourceResult);
+
+        private JsonObject SerializeResource(TResource resource) => SerializedResource;
 
         private sealed class TestHttpRequest : HttpRequest
         {
             private readonly Uri uri;
 
-            public TestHttpRequest(Uri uri, IHeaderDictionary headers)
+            public TestHttpRequest(Uri uri)
             {
                 this.uri = uri;
-                Headers = headers;
             }
 
             public override HttpContext HttpContext => throw new NotImplementedException();
@@ -232,7 +155,7 @@ public class HttpDeleteHandlerTests
             public override IQueryCollection Query { get => throw new NotImplementedException(); set => throw new NotImplementedException(); }
             public override string Protocol { get => throw new NotImplementedException(); set => throw new NotImplementedException(); }
 
-            public override IHeaderDictionary Headers { get; }
+            public override IHeaderDictionary Headers => throw new NotImplementedException();
 
             public override IRequestCookieCollection Cookies { get => throw new NotImplementedException(); set => throw new NotImplementedException(); }
             public override long? ContentLength { get => throw new NotImplementedException(); set => throw new NotImplementedException(); }

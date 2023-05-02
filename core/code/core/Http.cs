@@ -203,6 +203,12 @@ public static class HttpIResultExtensions
         return await either.Sequence()
                            .Map(Coalesce);
     }
+
+    public static async ValueTask<IResult> Coalesce<TError, TSuccess>(this EitherAsync<TError, TSuccess> either) where TSuccess : IResult where TError : IResult
+    {
+        var result = await either;
+        return result.Coalesce();
+    }
 }
 
 public static class HttpRequestExtensions
@@ -210,5 +216,21 @@ public static class HttpRequestExtensions
     public static string GetLastPathSegment(this HttpRequest request)
     {
         return Url.ParsePathSegments(request.Path).Last();
+    }
+}
+
+
+public static partial class HttpHandler
+{
+    private static Either<IResult, TId> TryGetId<TId>(HttpRequest request, Func<string, Either<string, TId>> tryGetIdFromString)
+    {
+        var idString = request.GetLastPathSegment();
+
+        return tryGetIdFromString(idString).MapLeft(error => new ApiErrorWithStatusCode
+        {
+            Code = new ApiErrorCode.InvalidId(),
+            Message = error,
+            StatusCode = HttpStatusCode.BadRequest
+        }.ToIResult());
     }
 }

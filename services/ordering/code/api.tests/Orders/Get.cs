@@ -12,12 +12,13 @@ using System;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace api.tests.Orders;
 
-public class DeleteTests
+public class GetTests
 {
     [Property]
     public Property Invalid_id_fails()
@@ -54,15 +55,11 @@ public class DeleteTests
     }
 
     [Property]
-    public Property Missing_If_Match_header_fails()
+    public Property Missing_resource_returns_NotFound()
     {
         var generator = from fixture in GenerateFixture()
-                        from request in fixture.GenerateValidHttpRequestMessage()
-                                               .Select(request =>
-                                               {
-                                                   request.Headers.Remove("If-Match");
-                                                   return request;
-                                               })
+                        from orderId in common.Generator.OrderId.Where(id => fixture.Orders.ContainsKey(id) is false)
+                        let request = Fixture.GetRequest(orderId)
                         select (fixture, request);
 
         var arbitrary = generator.ToArbitrary();
@@ -78,65 +75,29 @@ public class DeleteTests
             using var response = await fixture.SendRequest(request, cancellationToken);
 
             // Assert
-            response.StatusCode.Should().Be(HttpStatusCode.PreconditionRequired);
+            response.StatusCode.Should().Be(HttpStatusCode.NotFound);
 
             var apiError = await response.Content.DeserializeAs<ApiError>(cancellationToken);
-            apiError.Code.Should().BeOfType<ApiErrorCode.InvalidConditionalHeader>();
+            apiError.Code.Should().BeOfType<ApiErrorCode.ResourceNotFound>();
         });
     }
 
     [Property]
-    public Property Multiple_If_Match_headers_fail()
-    {
-        var generator = from fixture in GenerateFixture()
-                        from invalidHeader in core.Generator.AlphaNumericString
-                                                            .NonEmptySeqOf()
-                                                            .Where(x => x.Count > 1)
-                                                            .Select(x => x.ToArray())
-                        from request in fixture.GenerateValidHttpRequestMessage()
-                                               .Select(request =>
-                                               {
-                                                   request.Headers.TryAddWithoutValidation("If-Match", invalidHeader);
-                                                   return request;
-                                               })
-                        where request.Headers.Contains("If-Match")
-                        select (fixture, request);
-
-        var arbitrary = generator.ToArbitrary();
-
-        return Prop.ForAll(arbitrary, async x =>
-        {
-            // Arrange
-            var (fixture, request) = x;
-            using var _ = request;
-            var cancellationToken = CancellationToken.None;
-
-            // Act
-            using var response = await fixture.SendRequest(request, cancellationToken);
-
-            // Assert
-            response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
-
-            var apiError = await response.Content.DeserializeAs<ApiError>(cancellationToken);
-            apiError.Code.Should().BeOfType<ApiErrorCode.InvalidConditionalHeader>();
-        });
-    }
-
-    [Property]
-    public Property Incorrect_ETag_fails()
+    public Property Valid_request_returns_resource_with_eTag()
     {
         var generator = from fixture in GenerateFixture()
                         from x in Gen.Elements(fixture.Orders.Values)
-                        from badETag in core.Generator.ETag.Where(generatedETag => generatedETag != x.ETag)
-                        let request = Fixture.GetRequest(x.Order.Id, badETag)
-                        select (fixture, request);
+                        let order = x.Order
+                        let eTag = x.ETag
+                        let request = Fixture.GetRequest(order.Id)
+                        select (order, eTag, fixture, request);
 
         var arbitrary = generator.ToArbitrary();
 
         return Prop.ForAll(arbitrary, async x =>
         {
             // Arrange
-            var (fixture, request) = x;
+            var (order, eTag, fixture, request) = x;
             using var _ = request;
             var cancellationToken = CancellationToken.None;
 
@@ -144,37 +105,14 @@ public class DeleteTests
             using var response = await fixture.SendRequest(request, cancellationToken);
 
             // Assert
-            response.StatusCode.Should().Be(HttpStatusCode.PreconditionFailed);
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
 
-            var apiError = await response.Content.DeserializeAs<ApiError>(cancellationToken);
-            apiError.Code.Should().BeOfType<ApiErrorCode.ETagMismatch>();
-        });
-    }
+            var responseJson = await response.Content.DeserializeAs<JsonObject>(cancellationToken);
+            var responseOrder = api.Orders.Serialization.Deserialize(responseJson);
+            responseOrder.Should().BeEquivalentTo(order, options => options.ComparingRecordsByMembers());
 
-    [Property]
-    public Property Valid_request_succeeds()
-    {
-        var generator = from fixture in GenerateFixture()
-                        from x in Gen.Elements(fixture.Orders.Values)
-                        let orderId = x.Order.Id
-                        let request = Fixture.GetRequest(orderId, x.ETag)
-                        select (orderId, fixture, request);
-
-        var arbitrary = generator.ToArbitrary();
-
-        return Prop.ForAll(arbitrary, async x =>
-        {
-            // Arrange
-            var (orderId, fixture, request) = x;
-            using var _ = request;
-            var cancellationToken = CancellationToken.None;
-
-            // Act
-            using var response = await fixture.SendRequest(request, cancellationToken);
-
-            // Assert
-            response.StatusCode.Should().Be(HttpStatusCode.NoContent);
-            fixture.Orders.Find(orderId).Should().BeNone();
+            var responseETag = responseJson.GetStringProperty("eTag");
+            eTag.Value.Should().Be(responseETag);
         });
     }
 
@@ -212,23 +150,14 @@ public class DeleteTests
         public Gen<HttpRequestMessage> GenerateValidHttpRequestMessage()
         {
             return from x in Gen.Elements(Orders.Values)
-                   select GetRequest(x.Order.Id, x.ETag);
-        }
-
-        public static HttpRequestMessage GetRequest(OrderId orderId, ETag eTag)
-        {
-            var request = GetRequest(orderId);
-
-            request.Headers.TryAddWithoutValidation("If-Match", eTag.Value);
-
-            return request;
+                   select GetRequest(x.Order.Id);
         }
 
         public static HttpRequestMessage GetRequest(OrderId orderId)
         {
             var request = new HttpRequestMessage
             {
-                Method = HttpMethod.Delete,
+                Method = HttpMethod.Get,
                 RequestUri = GetRequestUri(orderId)
             };
 
@@ -263,22 +192,16 @@ public class DeleteTests
 
         private void ConfigureServices(IServiceCollection services)
         {
-            services.AddSingleton(DeleteOrder);
+            services.AddSingleton(FindOrder);
         }
 
-        private api.Orders.Delete.DeleteOrder DeleteOrder(IServiceProvider provider)
+        private api.Orders.Get.FindOrder FindOrder(IServiceProvider provider)
         {
-            return async (orderId, eTag, cancellationToken) =>
+            return async (orderId, cancellationToken) =>
             {
                 await ValueTask.CompletedTask;
 
-#pragma warning disable CA1849 // Call async methods when in an async method
-                return Orders.Find(orderId)
-                             .Map(x => eTag.Value == x.ETag.Value
-                                        ? Either<HttpHandler.DeleteError, Unit>.Right(Orders.Remove(orderId))
-                                        : Either<HttpHandler.DeleteError, Unit>.Left(new HttpHandler.DeleteError.ETagMismatch()))
-                             .IfNone(() => Either<HttpHandler.DeleteError, Unit>.Right(Prelude.unit));
-#pragma warning restore CA1849 // Call async methods when in an async method
+                return Orders.Find(orderId);
             };
         }
     }

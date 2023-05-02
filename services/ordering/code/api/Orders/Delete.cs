@@ -18,16 +18,16 @@ public static class Delete
 
     internal static void ConfigureEndpoint(IEndpointRouteBuilder builder)
     {
-        builder.MapDelete("/{orderId}", FileScopedHandler.Handle);
+        builder.MapDelete("/{orderId}", DeleteHandler.Handle);
     }
 
     internal static void ConfigureServices(IServiceCollection services)
     {
-        FileScopedServices.Configure(services);
+        DeleteServices.Configure(services);
     }
 }
 
-file static class FileScopedHandler
+file static class DeleteHandler
 {
     public static async ValueTask<IResult> Handle(HttpRequest request,
                                                   [FromServices] Delete.DeleteOrder deleteOrder,
@@ -46,7 +46,7 @@ file static class FileScopedHandler
     }
 }
 
-file static class FileScopedServices
+file static class DeleteServices
 {
     public static void Configure(IServiceCollection services)
     {

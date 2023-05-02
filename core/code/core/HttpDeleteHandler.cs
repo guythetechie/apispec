@@ -25,23 +25,12 @@ public static partial class HttpHandler
                                                        Func<string, Either<string, TId>> tryGetIdFromString,
                                                        Func<TId, ETag, ValueTask<Either<DeleteError, Unit>>> tryDeleteRecord)
     {
-        var result = from id in TryGetId(request, tryGetIdFromString)
-                     from eTag in TryGetETag(request)
-                     select Delete(id, eTag, tryDeleteRecord);
+        var result = from id in TryGetId(request, tryGetIdFromString).ToAsync()
+                     from eTag in TryGetETag(request).ToAsync()
+                     from _ in TryDelete(id, eTag, tryDeleteRecord).ToAsync()
+                     select GetSuccessfulResponse();
 
         return await result.Coalesce();
-    }
-
-    private static Either<IResult, TId> TryGetId<TId>(HttpRequest request, Func<string, Either<string, TId>> tryGetIdFromString)
-    {
-        var idString = request.GetLastPathSegment();
-
-        return tryGetIdFromString(idString).MapLeft(error => new ApiErrorWithStatusCode
-        {
-            Code = new ApiErrorCode.InvalidId(),
-            Message = error,
-            StatusCode = HttpStatusCode.BadRequest
-        }.ToIResult());
     }
 
     private static Either<IResult, ETag> TryGetETag(HttpRequest request)
@@ -85,20 +74,24 @@ public static partial class HttpHandler
                       .MapLeft(error => error.ToIResult());
     }
 
-    private static async ValueTask<IResult> Delete<TId>(TId id, ETag eTag, Func<TId, ETag, ValueTask<Either<DeleteError, Unit>>> tryDeleteRecord)
+    private static async ValueTask<Either<IResult, Unit>> TryDelete<TId>(TId id, ETag eTag, Func<TId, ETag, ValueTask<Either<DeleteError, Unit>>> tryDeleteRecord)
     {
         var result = await tryDeleteRecord(id, eTag);
 
-        return result.Match(_ => TypedResults.NoContent(),
-                            deleteError => deleteError switch
-                            {
-                                DeleteError.ETagMismatch => new ApiErrorWithStatusCode
-                                {
-                                    Code = new ApiErrorCode.ETagMismatch(),
-                                    Message = "The eTag passed in the 'If-Match' header is invalid. Another process might have updated the resource.",
-                                    StatusCode = HttpStatusCode.PreconditionFailed
-                                }.ToIResult(),
-                                _ => throw new NotImplementedException()
-                            });
+        return result.MapLeft(deleteError => deleteError switch
+        {
+            DeleteError.ETagMismatch => new ApiErrorWithStatusCode
+            {
+                Code = new ApiErrorCode.ETagMismatch(),
+                Message = "The eTag passed in the 'If-Match' header is invalid. Another process might have updated the resource.",
+                StatusCode = HttpStatusCode.PreconditionFailed
+            }.ToIResult(),
+            _ => throw new NotImplementedException()
+        });
+    }
+
+    private static IResult GetSuccessfulResponse()
+    {
+        return TypedResults.NoContent();
     }
 }

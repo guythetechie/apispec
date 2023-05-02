@@ -1,7 +1,7 @@
 openapi: 3.0.0
 info:
   title: Ordering API
-  version: v1
+  version: '0000-00-00'
 tags:
   - name: Orders
 paths:
@@ -33,9 +33,16 @@ paths:
                 type: object
                 properties:
                   code:
-                    type: string
-                    enum:
-                      - InvalidConditionalHeader
+                    anyOf:
+                      - type: string
+                        enum:
+                          - InvalidConditionalHeader
+                      - type: string
+                        enum:
+                          - InvalidId
+                    x-typespec-name: >-
+                      ApiSpec.Common.ErrorCode.InvalidConditionalHeader |
+                      ApiSpec.Common.ErrorCode.InvalidId
                   message:
                     $ref: '#/components/schemas/ApiSpec.Common.NonEmptyString'
                 required:
@@ -70,6 +77,69 @@ paths:
                     type: string
                     enum:
                       - InvalidConditionalHeader
+                  message:
+                    $ref: '#/components/schemas/ApiSpec.Common.NonEmptyString'
+                required:
+                  - code
+                  - message
+                x-typespec-name: ApiSpec.Common.(anonymous model)
+    get:
+      tags:
+        - Orders
+      operationId: Orders_getOrder
+      description: Get an order
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            format: uuid
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    $ref: '#/components/schemas/OrderId'
+                  eTag:
+                    $ref: '#/components/schemas/ApiSpec.Common.NonEmptyString'
+                required:
+                  - id
+                  - eTag
+                x-typespec-name: ApiSpec.Common.(anonymous model)
+        '400':
+          description: The server could not understand the request due to invalid syntax.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: string
+                    enum:
+                      - InvalidId
+                  message:
+                    $ref: '#/components/schemas/ApiSpec.Common.NonEmptyString'
+                required:
+                  - code
+                  - message
+                x-typespec-name: ApiSpec.Common.(anonymous model)
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: string
+                    enum:
+                      - ResourceNotFound
                   message:
                     $ref: '#/components/schemas/ApiSpec.Common.NonEmptyString'
                 required:
